@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>GAN Image Forensics Detector</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --bg: #08090d;
+    --surface: #0f1117;
+    --surface2: #161820;
+    --border: #22263a;
+    --accent: #00e5ff;
+    --accent2: #7c3aed;
+    --danger: #ff4757;
+    --safe: #2ed573;
+    --warn: #ffa502;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --mono: 'Share Tech Mono', monospace;
+    --sans: 'DM Sans', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); min-height: 100vh; }
+
+  /* Grid scanline effect */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,229,255,0.015) 2px, rgba(0,229,255,0.015) 4px);
+    pointer-events: none; z-index: 0;
+  }
+
+  .container { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem; position: relative; z-index: 1; }
+
+  /* Header */
+  header { text-align: center; margin-bottom: 2.5rem; }
+  .logo { font-family: var(--mono); font-size: 11px; color: var(--accent); letter-spacing: 0.3em; text-transform: uppercase; margin-bottom: 0.8rem; }
+  h1 { font-size: clamp(1.6rem, 4vw, 2.4rem); font-weight: 600; letter-spacing: -0.02em; }
+  h1 span { color: var(--accent); }
+  .subtitle { font-size: 13px; color: var(--muted); margin-top: 0.5rem; font-family: var(--mono); }
+
+  /* Upload zone */
+  .upload-zone {
+    border: 1.5px dashed var(--border);
+    border-radius: 12px;
+    padding: 3rem 2rem;
+    text-align: center;
+    background: var(--surface);
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+  .upload-zone:hover, .upload-zone.drag { border-color: var(--accent); background: rgba(0,229,255,0.04); }
+  .upload-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .upload-icon { font-size: 2.5rem; margin-bottom: 1rem; }
+  .upload-zone p { color: var(--muted); font-size: 14px; }
+  .upload-zone strong { color: var(--accent); }
+
+  /* Analyze button */
+  .btn {
+    display: block; width: 100%; margin-top: 1rem;
+    padding: 0.9rem; background: var(--accent);
+    color: #000; font-weight: 600; font-size: 15px;
+    border: none; border-radius: 8px; cursor: pointer;
+    font-family: var(--mono); letter-spacing: 0.05em;
+    transition: opacity 0.2s, transform 0.1s;
+  }
+  .btn:hover { opacity: 0.85; }
+  .btn:active { transform: scale(0.99); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Preview */
+  #preview-wrap { display: none; margin-top: 1.2rem; text-align: center; }
+  #preview-img { max-height: 200px; border-radius: 8px; border: 1px solid var(--border); }
+
+  /* Results */
+  #results { display: none; margin-top: 2rem; }
+
+  /* Verdict card */
+  .verdict {
+    border-radius: 12px; padding: 1.5rem 1.8rem;
+    display: flex; align-items: center; gap: 1.5rem;
+    margin-bottom: 1.5rem; border: 1px solid;
+    position: relative; overflow: hidden;
+  }
+  .verdict.fake { background: rgba(255,71,87,0.08); border-color: var(--danger); }
+  .verdict.real { background: rgba(46,213,115,0.08); border-color: var(--safe); }
+  .verdict-icon { font-size: 3rem; flex-shrink: 0; }
+  .verdict-label { font-family: var(--mono); font-size: 2rem; font-weight: 700; letter-spacing: 0.1em; }
+  .verdict.fake .verdict-label { color: var(--danger); }
+  .verdict.real .verdict-label { color: var(--safe); }
+  .verdict-sub { font-size: 12px; color: var(--muted); font-family: var(--mono); margin-top: 4px; }
+  .conf-bar-wrap { flex: 1; }
+  .conf-label { font-size: 12px; color: var(--muted); font-family: var(--mono); margin-bottom: 6px; }
+  .conf-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .conf-fill { height: 100%; border-radius: 3px; transition: width 1s ease; }
+  .fake .conf-fill { background: var(--danger); }
+  .real .conf-fill { background: var(--safe); }
+  .conf-val { font-family: var(--mono); font-size: 1.4rem; font-weight: 700; margin-top: 6px; }
+  .fake .conf-val { color: var(--danger); }
+  .real .conf-val { color: var(--safe); }
+
+  /* Cards grid */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1.2rem 1.4rem;
+  }
+  .card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 1rem; }
+  .card-icon { font-size: 1.1rem; }
+  .card-title { font-size: 12px; font-family: var(--mono); color: var(--accent); letter-spacing: 0.1em; text-transform: uppercase; }
+  .metric-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border); }
+  .metric-row:last-child { border-bottom: none; }
+  .metric-key { font-size: 12px; color: var(--muted); }
+  .metric-val { font-family: var(--mono); font-size: 13px; font-weight: 500; }
+  .badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-family: var(--mono); font-weight: 500; }
+  .badge.high { background: rgba(255,71,87,0.15); color: var(--danger); }
+  .badge.medium { background: rgba(255,165,2,0.15); color: var(--warn); }
+  .badge.low { background: rgba(46,213,115,0.15); color: var(--safe); }
+  .badge.yes { background: rgba(255,71,87,0.15); color: var(--danger); }
+  .badge.no { background: rgba(46,213,115,0.15); color: var(--safe); }
+
+  /* Patch regions */
+  .regions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .region-tag { font-size: 10px; font-family: var(--mono); padding: 2px 7px; border-radius: 4px; background: rgba(124,58,237,0.15); color: #a78bfa; border: 1px solid rgba(124,58,237,0.3); }
+
+  /* Visualizations */
+  .vis-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
+  .vis-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .vis-label { padding: 0.7rem 1rem; font-size: 11px; font-family: var(--mono); color: var(--accent); letter-spacing: 0.1em; border-bottom: 1px solid var(--border); }
+  .vis-card img { width: 100%; display: block; image-rendering: pixelated; }
+
+  /* Loading */
+  #loading { display: none; text-align: center; padding: 2rem; }
+  .spinner { width: 40px; height: 40px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 1rem; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { font-family: var(--mono); font-size: 13px; color: var(--accent); }
+
+  /* Section label */
+  .section-label { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 0.8rem; padding-left: 2px; }
+
+  .error-box { background: rgba(255,71,87,0.1); border: 1px solid var(--danger); border-radius: 8px; padding: 1rem; font-family: var(--mono); font-size: 13px; color: var(--danger); }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="logo">▸ DIP Forensics Lab v1.0</div>
+    <h1>GAN Image <span>Authenticity</span> Detector</h1>
+    <div class="subtitle">Frequency Analysis · Noise Residuals · Patch Statistics</div>
+  </header>
+
+  <!-- Upload -->
+  <div class="upload-zone" id="drop-zone">
+    <input type="file" id="file-input" accept="image/*"/>
+    <div class="upload-icon">🖼️</div>
+    <p><strong>Drop image here</strong> or click to browse</p>
+    <p style="margin-top:6px;font-size:12px;">Supports JPG, PNG, WEBP · Max 16MB</p>
+  </div>
+
+  <div id="preview-wrap">
+    <img id="preview-img" src="" alt="Preview"/>
+  </div>
+
+  <button class="btn" id="analyze-btn" disabled>⟶ ANALYZE IMAGE</button>
+
+  <!-- Loading -->
+  <div id="loading">
+    <div class="spinner"></div>
+    <div class="loading-text" id="loading-text">INITIALIZING PIPELINE...</div>
+  </div>
+
+  <!-- Results -->
+  <div id="results">
+
+    <!-- Verdict -->
+    <div class="verdict" id="verdict-card">
+      <div class="verdict-icon" id="verdict-icon"></div>
+      <div>
+        <div class="verdict-label" id="verdict-label"></div>
+        <div class="verdict-sub" id="verdict-sub"></div>
+      </div>
+      <div class="conf-bar-wrap">
+        <div class="conf-label">CONFIDENCE SCORE</div>
+        <div class="conf-bar"><div class="conf-fill" id="conf-fill" style="width:0%"></div></div>
+        <div class="conf-val" id="conf-val"></div>
+      </div>
+    </div>
+
+    <!-- Metrics -->
+    <div class="section-label">📊 Analysis Metrics</div>
+    <div class="cards">
+
+      <!-- Frequency -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-icon">📈</span>
+          <span class="card-title">Frequency Domain (DFT)</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-key">Peak frequency detected</span>
+          <span class="metric-val" id="peak-detected"></span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-key">Periodic artifact score</span>
+          <span class="metric-val" id="artifact-score"></span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-key">Method</span>
+          <span class="metric-val" style="color:var(--muted);font-size:11px">2D DFT + magnitude spectrum</span>
+        </div>
+      </div>
+
+      <!-- Noise -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-icon">🔬</span>
+          <span class="card-title">Noise Residual (SRM)</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-key">Noise inconsistency</span>
+          <span class="metric-val" id="noise-inconsistency"></span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-key">SRM residual variance</span>
+          <span class="metric-val" id="srm-variance"></span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-key">Method</span>
+          <span class="metric-val" style="color:var(--muted);font-size:11px">High-pass convolution filter</span>
+        </div>
+      </div>
+
+      <!-- Patch -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-icon">🧩</span>
+          <span class="card-title">Patch Analysis</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-key">Suspicious patches</span>
+          <span class="metric-val" id="patch-count"></span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-key">Suspicious ratio</span>
+          <span class="metric-val" id="patch-ratio"></span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-key">Flagged regions</span>
+          <span class="metric-val" id="patch-regions" style="text-align:right"></span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Visualizations -->
+    <div class="section-label">🌡️ Visualization Outputs</div>
+    <div class="vis-grid">
+      <div class="vis-card">
+        <div class="vis-label">INPUT IMAGE</div>
+        <img id="vis-input" src="" alt="Input"/>
+      </div>
+      <div class="vis-card">
+        <div class="vis-label">FREQUENCY SPECTRUM (DFT)</div>
+        <img id="vis-freq" src="" alt="Frequency"/>
+      </div>
+      <div class="vis-card">
+        <div class="vis-label">NOISE RESIDUAL MAP (SRM)</div>
+        <img id="vis-noise" src="" alt="Noise"/>
+      </div>
+      <div class="vis-card" id="heatmap-card">
+        <div class="vis-label">PATCH HEATMAP</div>
+        <img id="vis-heatmap" src="" alt="Heatmap"/>
+      </div>
+    </div>
+
+  </div><!-- /results -->
+
+</div><!-- /container -->
+
+<script>
+const fileInput = document.getElementById('file-input');
+const analyzeBtn = document.getElementById('analyze-btn');
+const dropZone = document.getElementById('drop-zone');
+const previewWrap = document.getElementById('preview-wrap');
+const previewImg = document.getElementById('preview-img');
+
+let selectedFile = null;
+
+// File selection
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) handleFile(fileInput.files[0]);
+});
+
+// Drag and drop
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('drag');
+  if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+});
+
+function handleFile(file) {
+  selectedFile = file;
+  const url = URL.createObjectURL(file);
+  previewImg.src = url;
+  previewWrap.style.display = 'block';
+  analyzeBtn.disabled = false;
+}
+
+// Analyze
+analyzeBtn.addEventListener('click', async () => {
+  if (!selectedFile) return;
+
+  document.getElementById('results').style.display = 'none';
+  document.getElementById('loading').style.display = 'block';
+  analyzeBtn.disabled = true;
+
+  const messages = [
+    'APPLYING 2D FOURIER TRANSFORM...',
+    'EXTRACTING SRM NOISE RESIDUALS...',
+    'ANALYZING PATCH STATISTICS...',
+    'COMPUTING CLASSIFICATION SCORE...'
+  ];
+  let mi = 0;
+  const loadTxt = document.getElementById('loading-text');
+  const msgInterval = setInterval(() => {
+    loadTxt.textContent = messages[mi % messages.length]; mi++;
+  }, 800);
+
+  const formData = new FormData();
+  formData.append('image', selectedFile);
+
+  try {
+    const res = await fetch('/analyze', { method: 'POST', body: formData });
+    const data = await res.json();
+    clearInterval(msgInterval);
+    document.getElementById('loading').style.display = 'none';
+
+    if (data.error) {
+      document.getElementById('results').style.display = 'block';
+      document.getElementById('results').innerHTML = `<div class="error-box">Error: ${data.error}</div>`;
+      return;
+    }
+
+    renderResults(data);
+  } catch (err) {
+    clearInterval(msgInterval);
+    document.getElementById('loading').style.display = 'none';
+    alert('Analysis failed. Make sure the server is running.');
+  }
+
+  analyzeBtn.disabled = false;
+});
+
+function renderResults(d) {
+  const isFake = d.label === 'FAKE';
+
+  // Verdict
+  const card = document.getElementById('verdict-card');
+  card.className = `verdict ${isFake ? 'fake' : 'real'}`;
+  document.getElementById('verdict-icon').textContent = isFake ? '⚠️' : '✅';
+  document.getElementById('verdict-label').textContent = d.label;
+  document.getElementById('verdict-sub').textContent = `Raw forensic score: ${d.raw_score}`;
+  document.getElementById('conf-val').textContent = `${d.confidence}%`;
+  setTimeout(() => {
+    document.getElementById('conf-fill').style.width = `${d.confidence}%`;
+  }, 100);
+
+  // Frequency
+  const peakEl = document.getElementById('peak-detected');
+  peakEl.innerHTML = badge(d.frequency.peak_detected ? 'YES' : 'NO', d.frequency.peak_detected ? 'yes' : 'no');
+  document.getElementById('artifact-score').textContent = d.frequency.artifact_score;
+
+  // Noise
+  const noiseEl = document.getElementById('noise-inconsistency');
+  noiseEl.innerHTML = badge(d.noise.inconsistency, d.noise.inconsistency.toLowerCase());
+  document.getElementById('srm-variance').textContent = d.noise.srm_variance;
+
+  // Patches
+  document.getElementById('patch-count').textContent = `${d.patches.suspicious_count} / ${d.patches.total_patches}`;
+  const ratio = (d.patches.suspicious_count / d.patches.total_patches * 100).toFixed(1);
+  document.getElementById('patch-ratio').textContent = `${ratio}%`;
+  const regEl = document.getElementById('patch-regions');
+  regEl.innerHTML = d.patches.regions.map(r => `<span style="font-size:10px;font-family:var(--mono);color:#a78bfa">${r}</span>`).join(', ');
+
+  // Images
+  document.getElementById('vis-input').src = `data:image/png;base64,${d.input_b64}`;
+  document.getElementById('vis-freq').src = `data:image/png;base64,${d.frequency.image_b64}`;
+  document.getElementById('vis-noise').src = `data:image/png;base64,${d.noise.image_b64}`;
+  if (d.patches.heatmap_b64) {
+    document.getElementById('vis-heatmap').src = `data:image/png;base64,${d.patches.heatmap_b64}`;
+  }
+
+  document.getElementById('results').style.display = 'block';
+  document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+}
+
+function badge(text, cls) {
+  return `<span class="badge ${cls}">${text}</span>`;
+}
+</script>
+</body>
+</html>
